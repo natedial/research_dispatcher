@@ -22,6 +22,17 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
 
+MARKET_SECTION_RULES = (
+    ("Fed Policy Path", ("fed", "fomc", "payroll", "labor", "wage", "cut", "hike", "policy")),
+    ("Front-End Rates & Money Markets", ("front-end", "front end", "sofr", "effr", "repo", "funding", "bill", "t-bill", "money market", "rrp")),
+    ("Outright Rates & Curve Views", ("curve", "yield", "2-year", "10-year", "30-year", "belly", "steepener", "flattener", "duration")),
+    ("Treasury Relative Value & Mechanics", ("treasury", "auction", "strip", "strips", "bank demand", "mbs", "convexity", "asset-swap", "asset swap")),
+    ("Swap Spreads", ("swap spread", "spreads", "asw", "sofr spread")),
+    ("Volatility & Options", ("vol", "gamma", "skew", "payer", "receiver", "swaption", "straddle", "option")),
+    ("Macro & Inflation", ("inflation", "cpi", "breakeven", "tips", "real yield", "oil", "energy", "stagflation")),
+    ("Cross-Market & Global Dynamics", ("bund", "ecb", "boj", "jgb", "gilt", "euro", "eur", "gbp", "cad", "cross-market", "global")),
+)
+
 
 class PDFGenerator:
     """Generates PDF reports from formatted data."""
@@ -415,6 +426,52 @@ class PDFGenerator:
         parsed = urlparse(viewer_url)
         return parsed.scheme == "https" and bool(parsed.netloc)
 
+    def _create_source_citations_html(self, tl: Dict[str, Any]) -> str:
+        """Create linked source labels for through-line citations."""
+        supporting_sources = tl.get("supporting_sources")
+        source_names = (
+            [
+                str(source).strip()
+                for source in supporting_sources
+                if str(source or "").strip()
+            ]
+            if isinstance(supporting_sources, list)
+            else []
+        )
+
+        link_by_label: dict[str, str] = {}
+        source_links = tl.get("source_links") or []
+        if isinstance(source_links, list):
+            for item in source_links:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("label") or "").strip()
+                url = str(item.get("url") or "").strip()
+                parsed_url = urlparse(url)
+                if label and parsed_url.scheme in {"http", "https"} and parsed_url.netloc:
+                    link_by_label[label.lower()] = url
+
+        if not source_names and tl.get("source"):
+            source_names = [
+                source.strip()
+                for source in str(tl.get("source")).split(",")
+                if source.strip()
+            ]
+
+        if not source_names:
+            return ""
+
+        rendered = []
+        for source in source_names:
+            url = link_by_label.get(source.lower())
+            if url:
+                rendered.append(
+                    f'<a href="{escape(url)}" color="#0066cc">{escape(source)}</a>'
+                )
+            else:
+                rendered.append(escape(source))
+        return f"Sources: {', '.join(rendered)}"
+
     def _get_content_width(self) -> float:
         """Return available content width in inches based on page margins."""
         margins = self.format_rules.get('PAGE_MARGINS', {})
@@ -534,19 +591,18 @@ class PDFGenerator:
             trades_list = ', '.join(tl['supporting_trades'])
             tags.append(f"Trades: {trades_list}")
 
+        source_citations = self._create_source_citations_html(tl)
         source = tl.get("source")
         document = tl.get("document")
-        supporting_sources = tl.get("supporting_sources")
-        if source:
+        if source_citations:
+            tags.append(source_citations)
+        elif source:
             label = "Sources" if "," in source or source == "Multiple" else "Source"
-            tags.append(f"{label}: {source}")
-        elif supporting_sources:
-            sources_text = ", ".join(supporting_sources)
-            tags.append(f"Sources: {sources_text}")
+            tags.append(f"{label}: {escape(str(source))}")
 
         if document:
             doc_text = document[:80] + ("..." if len(document) > 80 else "")
-            tags.append(f"Doc: {doc_text}")
+            tags.append(f"Doc: {escape(str(doc_text))}")
 
         if tags:
             tag_line = " | ".join(tags)
@@ -875,20 +931,163 @@ class PDFGenerator:
         elements.append(Spacer(1, 0.1 * inch))
         return elements
 
-    def _create_market_analysis_section(self, report_data: Dict[str, Any]) -> list:
-        """Render the detailed PM analysis paragraphs from the analyst stage."""
+    def _infer_market_section_title(self, item: Dict[str, Any]) -> str:
+        """Infer a market-subject heading for synthesis prose when none is supplied."""
+        explicit = str(item.get("section_title") or "").strip()
+        if explicit:
+            return explicit
+
+        primary_parts = [
+            str(item.get("text") or ""),
+        ]
+        primary_parts.extend(str(value) for value in item.get("theme_labels", []) or [])
+        primary_parts.extend(str(value) for value in item.get("supporting_themes", []) or [])
+        secondary_parts = [
+            str(item.get("lead") or ""),
+            str(item.get("key_insight") or ""),
+        ]
+        primary_haystack = " ".join(primary_parts).lower()
+        secondary_haystack = " ".join(secondary_parts).lower()
+        best_title = ""
+        best_score = 0
+        for title, keywords in MARKET_SECTION_RULES:
+            score = sum(2 for keyword in keywords if keyword in primary_haystack)
+            score += sum(1 for keyword in keywords if keyword in secondary_haystack)
+            if score > best_score:
+                best_title = title
+                best_score = score
+        if best_title:
+            return best_title
+        return "Market Synthesis"
+
+    def _sectioned_narrative_items(self, report_data: Dict[str, Any]) -> list[Dict[str, Any]]:
+        """Return renderable narrative items from analyst paragraphs or through-line fallback."""
         analysis_paragraphs = report_data.get("analysis_paragraphs", [])
-        rendered = []
+        rendered: list[Dict[str, Any]] = []
         for paragraph in analysis_paragraphs:
-            text = paragraph.get("text", "") if isinstance(paragraph, dict) else str(paragraph)
+            if isinstance(paragraph, dict):
+                text = str(paragraph.get("text") or "").strip()
+                item = dict(paragraph)
+            else:
+                text = str(paragraph).strip()
+                item = {"text": text}
             if text:
-                rendered.append(text)
+                item["text"] = text
+                item["section_title"] = self._infer_market_section_title(item)
+                rendered.append(item)
+
+        if rendered:
+            return rendered
+
+        through_lines = report_data.get("through_lines", [])
+        for through_line in through_lines:
+            if not isinstance(through_line, dict):
+                continue
+            lead = str(through_line.get("lead") or "").strip()
+            insight = str(through_line.get("key_insight") or "").strip()
+            if not lead and not insight:
+                continue
+            item = {
+                "section_title": self._infer_market_section_title(through_line),
+                "lead": lead,
+                "text": insight or lead,
+            }
+            rendered.append(item)
+        return rendered
+
+    def _create_market_analysis_section(self, report_data: Dict[str, Any]) -> list:
+        """Render a sectioned narrative synthesis from analyst output or through-line fallback."""
+        rendered = self._sectioned_narrative_items(report_data)
         if not rendered:
             return []
 
-        elements = self._create_section_header("Market Analysis", new_page=False)
-        for text in rendered:
+        elements = self._create_section_header("Narrative Synthesis", new_page=False)
+        current_section = None
+        for item in rendered:
+            section_title = self._infer_market_section_title(item)
+            if section_title != current_section:
+                elements.append(Paragraph(escape(section_title), self.styles["SubsectionHeader"]))
+                current_section = section_title
+            lead = str(item.get("lead") or "").strip()
+            text = str(item.get("text") or "").strip()
+            if lead and lead != text:
+                elements.append(Paragraph(f"<b>{escape(lead)}</b>", self.styles["Normal"]))
+                elements.append(Spacer(1, 0.03 * inch))
             elements.append(Paragraph(escape(text), self.styles["Normal"]))
+            elements.append(Spacer(1, 0.08 * inch))
+        elements.append(Spacer(1, 0.1 * inch))
+        return elements
+
+    def _create_trade_digest_section(self, report_data: Dict[str, Any]) -> list:
+        """Render a compact source-grouped digest of trades tied to synthesized narratives."""
+        grouped: dict[str, list[dict[str, str]]] = {}
+        seen: set[tuple[str, str]] = set()
+        for through_line in report_data.get("through_lines", []):
+            if not isinstance(through_line, dict):
+                continue
+            refs = through_line.get("supporting_trade_refs") or []
+            trades = through_line.get("supporting_trades") or []
+            if isinstance(refs, list) and refs:
+                trade_items = refs
+            elif isinstance(trades, list):
+                trade_items = [{"text": trade} for trade in trades]
+            else:
+                trade_items = []
+            sources = through_line.get("supporting_sources") or []
+            if isinstance(sources, list) and sources:
+                source_label = ", ".join(str(source).strip() for source in sources[:3] if str(source).strip())
+            else:
+                source_label = str(through_line.get("source") or "Cross-document").strip()
+            if not source_label:
+                source_label = "Cross-document"
+            rationale = str(through_line.get("lead") or "").strip()
+            for trade in trade_items:
+                if isinstance(trade, dict):
+                    trade_text = str(trade.get("text") or trade.get("exposure") or "").strip()
+                    parser_rationale = str(trade.get("rationale") or "").strip()
+                else:
+                    trade_text = str(trade or "").strip()
+                    parser_rationale = ""
+                if not trade_text:
+                    continue
+                key = (source_label, trade_text.lower())
+                if key in seen:
+                    continue
+                seen.add(key)
+                grouped.setdefault(source_label, []).append(
+                    {
+                        "trade": trade_text,
+                        "rationale": rationale,
+                        "parser_rationale": parser_rationale,
+                    }
+                )
+
+        if not grouped:
+            return []
+
+        elements = self._create_section_header("Trade Idea Digest", new_page=False)
+        for source_label, items in grouped.items():
+            elements.append(Paragraph(escape(source_label), self.styles["SubsectionHeader"]))
+            for item in items:
+                trade_text = escape(item["trade"])
+                rationale = escape(item["rationale"])
+                parser_rationale = escape(item.get("parser_rationale") or "")
+                if rationale and parser_rationale:
+                    elements.append(
+                        Paragraph(
+                            f"<b>{trade_text}</b><br/><i>Rationale: {rationale}</i><br/><i>Source note: {parser_rationale}</i>",
+                            self.styles["IndentedBody"],
+                        )
+                    )
+                elif rationale:
+                    elements.append(
+                        Paragraph(
+                            f"<b>{trade_text}</b><br/><i>Rationale: {rationale}</i>",
+                            self.styles["IndentedBody"],
+                        )
+                    )
+                else:
+                    elements.append(Paragraph(f"<b>{trade_text}</b>", self.styles["IndentedBody"]))
             elements.append(Spacer(1, 0.08 * inch))
         elements.append(Spacer(1, 0.1 * inch))
         return elements
@@ -1013,6 +1212,7 @@ class PDFGenerator:
 
         story.extend(self._create_executive_summary_section(report_data))
         story.extend(self._create_market_analysis_section(report_data))
+        story.extend(self._create_trade_digest_section(report_data))
         story.extend(self._create_delta_section(report_data))
 
         # Through Lines section — rendered as card blocks

@@ -11,7 +11,7 @@ Return EXACTLY ONE JSON object. No explanations outside the JSON.
       "consensus_level": "moderate_consensus",
       "consensus_anchor": "dominant market belief this through-line supports, fractures, or challenges",
       "supporting_themes": ["theme label 1", "theme label 2"],
-      "supporting_trades": ["trade description 1"],
+      "supporting_trade_ids": ["t3"],
       "key_insight": "synthesis paragraph with source attribution"
     }
   ],
@@ -55,6 +55,6 @@ OUTPUT RULES
 2. 3-8 through-lines (prioritize quality over quantity)
 3. Always attribute insights to sources
 4. Highlight both consensus AND divergence
-5. Connect trades to themes where logical relationships exist
+5. Connect input trades to themes where logical relationships exist; reference trades only by `trade_id`
 6. 2-4 callouts (focus on highest-signal insights)
 7. No commentary outside the JSON

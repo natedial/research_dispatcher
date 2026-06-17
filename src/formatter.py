@@ -8,6 +8,7 @@ import re
 
 from config import parse_trade_conviction_filter
 from .report_models import DispatchBatch, DispatchDocument
+from .trade_curation import collect_curated_trades
 from .trade_normalization import dedupe_text_items, normalize_trade_expression
 
 
@@ -772,6 +773,34 @@ class ReportFormatter:
                 )
         return all_trades
 
+    def build_curated_trades_from_synthesis(
+        self,
+        through_lines: list[dict[str, Any]],
+        conviction_filter: str = "all",
+    ) -> list[dict[str, Any]]:
+        """Return parser-sourced trades selected by synthesis, filtered by conviction."""
+        normalized_conviction_filter = parse_trade_conviction_filter(
+            conviction_filter,
+            default="all",
+        )
+        curated = collect_curated_trades(through_lines)
+        if normalized_conviction_filter == "all":
+            return curated
+
+        filtered: list[dict[str, Any]] = []
+        for trade in curated:
+            conviction = str(trade.get("conviction") or "n/a").strip().lower()
+            if normalized_conviction_filter == "high" and conviction != "high":
+                continue
+            if normalized_conviction_filter == "medium" and conviction not in (
+                "high",
+                "medium",
+                "moderate",
+            ):
+                continue
+            filtered.append(trade)
+        return filtered
+
     def _aggregate_through_lines(self, data: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Aggregate and format through_lines across all documents."""
         all_through_lines = []
@@ -785,6 +814,8 @@ class ReportFormatter:
             doc_name = record.get("document_name", "Unknown Document")
             doc_id = record.get("id", "")
             source = record.get("source", "Unknown Source")
+            metadata = parsed_data.get("metadata", {}) if isinstance(parsed_data, dict) else {}
+            document_link = record.get("document_link") or metadata.get("document_link")
 
             for tl in through_lines:
                 if not isinstance(tl, dict):
@@ -809,6 +840,11 @@ class ReportFormatter:
                         "doc_id": doc_id,
                         "item_id": self._generate_item_id(f"{doc_id}:{lead[:50]}"),
                         "source": source,
+                        "source_links": (
+                            [{"label": source, "url": document_link}]
+                            if document_link
+                            else []
+                        ),
                     }
                 )
         return all_through_lines

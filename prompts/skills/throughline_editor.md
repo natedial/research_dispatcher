@@ -18,7 +18,7 @@ EDITOR RULES
 Required:
 1. Preserve the same number of through-lines
 2. Preserve the same core findings and supporting sources
-3. Do not add new facts, new sources, new trades, or new themes
+3. Do not add new facts, new sources, new trades, new trade_ids, or new themes
 4. Tighten wording, remove awkward phrasing, and improve consistency
 5. Keep consensus framing disciplined and explicit
 6. Return valid JSON that matches the schema exactly
@@ -35,7 +35,8 @@ WHAT TO FIX
 
 - Rewrite vague or slogan-like leads into causal findings
 - Rewrite generic `consensus_anchor` values into a short market belief
-- Convert `supporting_trades` into short executable trade expressions if present
+- Preserve `supporting_trade_ids` exactly as provided; do not replace them with free-text trade expressions
+- Convert only prose fields (`lead`, `consensus_anchor`, `key_insight`) for readability
 - Remove redundancy
 - Improve sentence flow
 - Keep contrarian labels only when they genuinely challenge a shared assumption
@@ -65,7 +66,7 @@ Return EXACTLY ONE JSON object with this structure:
       "consensus_level": "strong_consensus|moderate_consensus|mixed_views|contrarian",
       "consensus_anchor": "The dominant market belief this through-line supports, fractures, or challenges",
       "supporting_themes": ["theme label 1", "theme label 2"],
-      "supporting_trades": ["trade expression 1"],
+      "supporting_trade_ids": ["t3"],
       "key_insight": "Short edited narrative that preserves the draft meaning"
     }
   ]

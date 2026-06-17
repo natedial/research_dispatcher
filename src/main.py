@@ -316,6 +316,11 @@ def main():
                     synthesis_result.through_lines,
                 )
             )
+            report_data["trades"] = formatter.build_curated_trades_from_synthesis(
+                synthesis_result.through_lines,
+                conviction_filter=Config.FILTER_TRADE_CONVICTION,
+            )
+            report_data["report_metadata"]["trade_source"] = "synthesis_curated"
 
         # Add calendar data to report
         report_data["economic_calendar"] = formatter.format_economic_calendar(

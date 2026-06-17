@@ -15,6 +15,7 @@ class ThroughlineInputBuilderTests(unittest.TestCase):
                 "document_name": "Rates Daily",
                 "source": "Goldman Sachs",
                 "source_date": "2026-03-30",
+                "document_link": "https://example.test/gs-rates",
                 "parsed_data": {
                     "themes": [
                         {
@@ -42,7 +43,17 @@ class ThroughlineInputBuilderTests(unittest.TestCase):
 
         self.assertEqual(payload["document_count"], 1)
         self.assertEqual(payload["themes"][0]["label"], "Higher term premium")
+        self.assertEqual(payload["themes"][0]["document_link"], "https://example.test/gs-rates")
+        self.assertEqual(
+            payload["documents"][0],
+            {
+                "source": "Goldman Sachs",
+                "document": "Rates Daily",
+                "document_link": "https://example.test/gs-rates",
+            },
+        )
         self.assertEqual(payload["trades"][0]["text"], "Pay 5y rates")
+        self.assertEqual(payload["trades"][0]["trade_id"], "t1")
         self.assertEqual(payload["sources"], ["Goldman Sachs"])
 
     def test_build_from_batch_exports_richer_signal_sets(self):
@@ -154,6 +165,7 @@ class ThroughlineInputBuilderTests(unittest.TestCase):
         self.assertEqual(payload["batch_key"], "2026-04-01:us:rates")
         self.assertEqual(payload["analysis_version"], "2026-04-01")
         self.assertEqual(payload["themes"][0]["quality_score"], 91.0)
+        self.assertEqual(payload["documents"], [])
         self.assertEqual(
             payload["trading_opportunities"][0]["instrument"],
             "5s30s UST curve",

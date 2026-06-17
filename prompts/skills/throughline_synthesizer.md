@@ -23,8 +23,9 @@ THROUGH-LINE CONSTRAINTS
 - Each through-line should connect at least 2 supporting themes unless it is a clearly labeled contrarian single-source risk
 - Prefer one comprehensive through-line per theme cluster rather than several overlapping variants
 - Exclude themes or trades that do not form a coherent narrative
-- Include no more than 2 supporting trades, and write them as short executable expressions rather than full rationale blobs
-- Leave `supporting_trades` empty when no trade cleanly expresses the finding
+- Select at most 2 supporting trades by `trade_id` from the input `trades` array; never invent or rephrase trade expressions
+- Leave `supporting_trade_ids` empty when no input trade cleanly expresses the finding
+- When `scope.asset_focus` is set, only attach trades that are actionable for that asset class; exclude commodity, energy, or unrelated FX trades unless the source explicitly links them to the scoped asset via inflation, funding, issuance, or term-premium transmission
 
 {{component:throughline_balance_rules}}
 
@@ -87,7 +88,7 @@ Return EXACTLY ONE JSON object with this structure:
       "consensus_level": "strong_consensus|moderate_consensus|mixed_views|contrarian",
       "consensus_anchor": "The dominant market belief this through-line supports, fractures, or challenges",
       "supporting_themes": ["theme label 1", "theme label 2"],
-      "supporting_trades": ["trade expression 1"],
+      "supporting_trade_ids": ["t3"],
       "key_insight": "Synthesis paragraph (max 300 words) covering the narrative, agreement, disagreement, mechanism, and implications with source-attributed citations"
     }
   ]
@@ -97,7 +98,7 @@ RULES:
 1. Return EXACTLY ONE JSON object - no text outside the JSON
 2. 3-8 through-lines (prioritize quality over quantity)
 3. Highlight both consensus AND divergence where present
-4. Connect trades to themes where logical relationships exist
+4. Connect input trades to themes where logical relationships exist; reference trades only by `trade_id`
 5. Every claim in key_insight must cite supporting sources
 6. Every through-line must read as a single narrative finding, not a list of adjacent observations
 7. Supporting themes are the evidence spine of the through-line

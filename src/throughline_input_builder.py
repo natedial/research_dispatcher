@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Any
 
 from .report_models import DispatchBatch
+from .trade_curation import assign_trade_ids
 from .trade_normalization import normalize_trade_expression
 
 
@@ -15,6 +16,7 @@ class ThroughlineInputBuilder:
     def build_from_legacy_documents(self, documents: list[dict[str, Any]]) -> dict[str, Any]:
         themes: list[dict[str, Any]] = []
         trades: list[dict[str, Any]] = []
+        document_refs: list[dict[str, str]] = []
         sources: set[str] = set()
         dates: list[date] = []
 
@@ -25,11 +27,21 @@ class ThroughlineInputBuilder:
 
             source = str(doc.get("source") or "Unknown")
             doc_name = str(doc.get("document_name") or "Unknown Document")
+            metadata = parsed_data.get("metadata", {}) if isinstance(parsed_data, dict) else {}
+            document_link = str(doc.get("document_link") or metadata.get("document_link") or "").strip()
             source_date = self._parse_source_date(doc.get("source_date"))
 
             sources.add(source)
             if source_date:
                 dates.append(source_date)
+            if document_link:
+                document_refs.append(
+                    {
+                        "source": source,
+                        "document": doc_name,
+                        "document_link": document_link,
+                    }
+                )
 
             for theme in parsed_data.get("themes", []):
                 if not isinstance(theme, dict):
@@ -44,6 +56,8 @@ class ThroughlineInputBuilder:
                     "classification": theme.get("classification", "Description"),
                     "mention_count": theme.get("mention_count", 0),
                 }
+                if document_link:
+                    theme_entry["document_link"] = document_link
                 excerpts = theme.get("excerpts")
                 if isinstance(excerpts, list) and excerpts:
                     theme_entry["excerpts"] = excerpts
@@ -56,27 +70,21 @@ class ThroughlineInputBuilder:
                 themes.append(theme_entry)
 
             for trade in parsed_data.get("trades", []):
-                if not isinstance(trade, dict):
-                    continue
-                trade_text = normalize_trade_expression(
-                    trade.get("exposure") or trade.get("text", "")
+                entry = self._build_trade_entry(
+                    trade,
+                    source=source,
+                    document=doc_name,
+                    source_date=doc.get("source_date"),
+                    document_link=document_link,
                 )
-                if not trade_text:
-                    continue
-                trades.append(
-                    {
-                        "source": source,
-                        "document": doc_name,
-                        "text": trade_text,
-                        "conviction": trade.get("conviction", "Medium"),
-                        "timeframe": trade.get("timeframe", "weeks"),
-                        "rationale": trade.get("rationale", ""),
-                    }
-                )
+                if entry:
+                    trades.append(entry)
 
+        assign_trade_ids(trades)
         return {
             "themes": themes,
             "trades": trades,
+            "documents": document_refs,
             "document_count": len(documents),
             "sources": sorted(sources),
             "date_range": self._build_date_range(dates),
@@ -92,6 +100,7 @@ class ThroughlineInputBuilder:
         forecasts: list[dict[str, Any]] = []
         world_nodes: list[dict[str, Any]] = []
         world_edges: list[dict[str, Any]] = []
+        document_refs: list[dict[str, str]] = []
         sources: set[str] = set()
         dates: list[date] = []
 
@@ -100,6 +109,14 @@ class ThroughlineInputBuilder:
             parsed_date = self._parse_source_date(document.source_date)
             if parsed_date:
                 dates.append(parsed_date)
+            if document.document_link:
+                document_refs.append(
+                    {
+                        "source": document.source,
+                        "document": document.document_name,
+                        "document_link": document.document_link,
+                    }
+                )
             node_label_by_key = {
                 node.node_key: node.canonical_label
                 for node in document.world_nodes
@@ -118,6 +135,8 @@ class ThroughlineInputBuilder:
                     "mention_count": theme.mention_count,
                     "quality_score": document.quality.score,
                 }
+                if document.document_link:
+                    entry["document_link"] = document.document_link
                 if theme.excerpts:
                     entry["excerpts"] = list(theme.excerpts)
                 if theme.directionality:
@@ -127,20 +146,16 @@ class ThroughlineInputBuilder:
                 themes.append(entry)
 
             for trade in document.trades:
-                trade_text = normalize_trade_expression(trade.exposure or trade.text)
-                if not trade_text:
-                    continue
-                trades.append(
-                    {
-                        "source": document.source,
-                        "document": document.document_name,
-                        "text": trade_text,
-                        "conviction": trade.conviction,
-                        "timeframe": trade.timeframe,
-                        "rationale": trade.rationale,
-                        "quality_score": document.quality.score,
-                    }
+                entry = self._build_trade_entry(
+                    trade.to_legacy_dict(),
+                    source=document.source,
+                    document=document.document_name,
+                    source_date=document.source_date,
+                    document_link=document.document_link,
+                    quality_score=document.quality.score,
                 )
+                if entry:
+                    trades.append(entry)
 
             for opportunity in document.trading_opportunities:
                 trading_opportunities.append(
@@ -160,6 +175,8 @@ class ThroughlineInputBuilder:
                         "quality_score": document.quality.score,
                     }
                 )
+                if document.document_link:
+                    trading_opportunities[-1]["document_link"] = document.document_link
 
             for insight in document.short_time_horizon_insights:
                 short_time_horizon_insights.append(
@@ -175,6 +192,8 @@ class ThroughlineInputBuilder:
                         "quality_score": document.quality.score,
                     }
                 )
+                if document.document_link:
+                    short_time_horizon_insights[-1]["document_link"] = document.document_link
 
             for point in document.talking_points:
                 talking_points.append(
@@ -189,6 +208,8 @@ class ThroughlineInputBuilder:
                         "quality_score": document.quality.score,
                     }
                 )
+                if document.document_link:
+                    talking_points[-1]["document_link"] = document.document_link
 
             for assertion in document.assertions:
                 assertions.append(
@@ -207,6 +228,8 @@ class ThroughlineInputBuilder:
                         "quality_score": document.quality.score,
                     }
                 )
+                if document.document_link:
+                    assertions[-1]["document_link"] = document.document_link
 
             for forecast in document.forecast_candidates:
                 forecasts.append(
@@ -223,6 +246,8 @@ class ThroughlineInputBuilder:
                         "extraction_confidence": forecast.extraction_confidence,
                     }
                 )
+                if document.document_link:
+                    forecasts[-1]["document_link"] = document.document_link
 
             for node in document.world_nodes:
                 world_nodes.append(
@@ -237,6 +262,8 @@ class ThroughlineInputBuilder:
                         "support_count": node.support_count,
                     }
                 )
+                if document.document_link:
+                    world_nodes[-1]["document_link"] = document.document_link
 
             for edge in document.world_edges:
                 world_edges.append(
@@ -255,10 +282,14 @@ class ThroughlineInputBuilder:
                         "support_count": edge.support_count,
                     }
                 )
+                if document.document_link:
+                    world_edges[-1]["document_link"] = document.document_link
 
+        assign_trade_ids(trades)
         return {
             "themes": themes,
             "trades": trades,
+            "documents": document_refs,
             "trading_opportunities": trading_opportunities,
             "short_time_horizon_insights": short_time_horizon_insights,
             "talking_points": talking_points,
@@ -274,6 +305,44 @@ class ThroughlineInputBuilder:
             "analysis_version": batch.analysis_version,
             "cross_document_signals": dict(batch.cross_document_signals),
         }
+
+    @staticmethod
+    def _build_trade_entry(
+        trade: Any,
+        *,
+        source: str,
+        document: str,
+        source_date: Any = None,
+        document_link: str = "",
+        quality_score: float | None = None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(trade, dict):
+            return None
+
+        trade_text = normalize_trade_expression(
+            trade.get("exposure") or trade.get("text", "")
+        )
+        if not trade_text:
+            return None
+
+        entry: dict[str, Any] = {
+            "source": source,
+            "document": document,
+            "text": trade_text,
+            "exposure": trade.get("exposure") or trade_text,
+            "conviction": trade.get("conviction", "Medium"),
+            "timeframe": trade.get("timeframe", "weeks"),
+            "rationale": trade.get("rationale", ""),
+            "source_date": source_date,
+        }
+        trigger_levels = trade.get("trigger_levels")
+        if isinstance(trigger_levels, dict) and trigger_levels:
+            entry["trigger_levels"] = dict(trigger_levels)
+        if document_link:
+            entry["document_link"] = document_link
+        if quality_score is not None:
+            entry["quality_score"] = quality_score
+        return entry
 
     @staticmethod
     def _parse_source_date(value: Any) -> date | None:

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, date
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .llm import (
     LLMClient,
@@ -22,6 +23,11 @@ from .stage1_profiles import (
 )
 from .report_models import DispatchBatch
 from .throughline_input_builder import ThroughlineInputBuilder
+from .trade_curation import (
+    build_trade_catalog,
+    coerce_supporting_trade_ids,
+    resolve_through_line_trade_references,
+)
 from .trade_normalization import dedupe_text_items, normalize_trade_expression
 
 
@@ -38,6 +44,16 @@ MAX_CLUSTER_SOURCES = 6
 MAX_CLUSTER_CONTEXT_CHARS = 280
 MAX_CLUSTER_EXCERPTS = 2
 MAX_CLUSTER_EXCERPT_CHARS = 160
+ANALYSIS_SECTION_RULES = (
+    ("Fed Policy Path", ("fed", "fomc", "payroll", "labor", "wage", "cut", "hike", "policy")),
+    ("Front-End Rates & Money Markets", ("front-end", "front end", "sofr", "effr", "repo", "funding", "bill", "t-bill", "money market", "rrp")),
+    ("Outright Rates & Curve Views", ("curve", "yield", "2-year", "10-year", "30-year", "belly", "steepener", "flattener", "duration")),
+    ("Treasury Relative Value & Mechanics", ("treasury", "auction", "strip", "strips", "bank demand", "mbs", "convexity", "asset-swap", "asset swap")),
+    ("Swap Spreads", ("swap spread", "spreads", "asw", "sofr spread")),
+    ("Volatility & Options", ("vol", "gamma", "skew", "payer", "receiver", "swaption", "straddle", "option")),
+    ("Macro & Inflation", ("inflation", "cpi", "breakeven", "tips", "real yield", "oil", "energy", "stagflation")),
+    ("Cross-Market & Global Dynamics", ("bund", "ecb", "boj", "jgb", "gilt", "euro", "eur", "gbp", "cad", "cross-market", "global")),
+)
 
 
 def _expand_components(prompt: str) -> str:
@@ -247,6 +263,9 @@ class Synthesizer:
             input_data = self._prepare_input(documents)
             document_count = len(documents)
 
+        if scope:
+            input_data["scope"] = dict(scope)
+
         if not input_data["themes"]:
             print("No themes found in documents, skipping synthesis")
             return None
@@ -272,7 +291,7 @@ class Synthesizer:
             )
             coerced_stage1 = self._coerce_stage1_result(data)
             through_lines = coerced_stage1.get("through_lines", [])
-            self._normalize_through_lines(through_lines)
+            self._normalize_through_lines(through_lines, input_data=input_data)
             callouts = data.get("callouts", [])
             self._normalize_callouts(callouts, through_lines)
             result = SynthesisResult(
@@ -391,7 +410,7 @@ class Synthesizer:
             print(f"  Stage 2 complete: {len(callouts)} callouts")
 
         # Post-process
-        self._normalize_through_lines(through_lines)
+        self._normalize_through_lines(through_lines, input_data=input_data)
         self._normalize_callouts(callouts, through_lines)
 
         result = SynthesisResult(
@@ -550,8 +569,14 @@ class Synthesizer:
             print(f"  Stage 1D analyst editor error: {e}")
             return None
 
-    def _normalize_through_lines(self, through_lines: list[dict[str, Any]]) -> None:
+    def _normalize_through_lines(
+        self,
+        through_lines: list[dict[str, Any]],
+        input_data: dict[str, Any] | None = None,
+    ) -> None:
         """Ensure through-lines have displayable source metadata."""
+        source_link_index = self._build_source_link_index(input_data or {})
+        trade_catalog = build_trade_catalog((input_data or {}).get("trades", []))
         for tl in through_lines:
             if not isinstance(tl, dict):
                 continue
@@ -560,13 +585,76 @@ class Synthesizer:
             tl["key_insight"] = " ".join(str(tl.get("key_insight", "")).split()).strip()
             tl["supporting_sources"] = dedupe_text_items(tl.get("supporting_sources"), limit=6)
             tl["supporting_themes"] = dedupe_text_items(tl.get("supporting_themes"), limit=6)
-            tl["supporting_trades"] = self._normalize_supporting_trades(tl.get("supporting_trades"))
+            resolve_through_line_trade_references(
+                tl,
+                trade_catalog,
+                max_trades=2,
+                allow_text_fallback=True,
+            )
+            supporting_sources = tl.get("supporting_sources")
+            if supporting_sources:
+                tl["source_links"] = self._source_links_for_sources(
+                    supporting_sources,
+                    source_link_index,
+                )
             if tl.get("source") or tl.get("document"):
                 continue
-            supporting_sources = tl.get("supporting_sources")
             if supporting_sources:
                 tl["source"] = self._format_sources(supporting_sources)
                 tl["document"] = "Cross-document synthesis"
+
+    def _build_source_link_index(self, input_data: dict[str, Any]) -> dict[str, dict[str, str]]:
+        """Map source names and abbreviations to original document links."""
+        index: dict[str, dict[str, str]] = {}
+        containers = [
+            input_data.get("documents", []),
+            input_data.get("themes", []),
+            input_data.get("trades", []),
+            input_data.get("trading_opportunities", []),
+            input_data.get("short_time_horizon_insights", []),
+            input_data.get("talking_points", []),
+            input_data.get("assertions", []),
+            input_data.get("forecasts", []),
+            input_data.get("world_nodes", []),
+            input_data.get("world_edges", []),
+        ]
+        for entries in containers:
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                source = self._clean_text(entry.get("source"))
+                link = self._clean_text(entry.get("document_link"))
+                if not source or not self._is_public_document_link(link):
+                    continue
+                ref = {"label": source, "url": link}
+                for key in {source.lower(), self._abbreviate_source(source).lower()}:
+                    index.setdefault(key, ref)
+        return index
+
+    @staticmethod
+    def _is_public_document_link(value: str) -> bool:
+        parsed = urlparse(value)
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+    def _source_links_for_sources(
+        self,
+        sources: list[str],
+        source_link_index: dict[str, dict[str, str]],
+    ) -> list[dict[str, str]]:
+        links: list[dict[str, str]] = []
+        seen_urls: set[str] = set()
+        for source in sources:
+            cleaned = self._clean_text(source)
+            ref = source_link_index.get(cleaned.lower())
+            if not ref:
+                ref = source_link_index.get(self._abbreviate_source(cleaned).lower())
+            if not ref or ref["url"] in seen_urls:
+                continue
+            seen_urls.add(ref["url"])
+            links.append({"label": cleaned or ref["label"], "url": ref["url"]})
+        return links
 
     def _coerce_stage1_result(self, data: Any) -> dict[str, Any]:
         """Coerce model output into the expected stage-one schema before downstream normalization."""
@@ -720,13 +808,43 @@ class Synthesizer:
         if not question_ids:
             raise ValueError("Analysis paragraph must reference at least one question id")
 
+        section_title = self._clean_text(value.get("section_title"))
+        if not section_title:
+            section_title = self._infer_analysis_section_title(
+                text=text,
+                through_line_leads=through_line_leads,
+                theme_labels=theme_labels,
+            )
+
         return {
+            "section_title": section_title,
             "text": text,
             "through_line_ids": through_line_ids,
             "through_line_leads": through_line_leads,
             "theme_labels": theme_labels,
             "question_ids": question_ids,
         }
+
+    def _infer_analysis_section_title(
+        self,
+        text: str,
+        through_line_leads: list[str],
+        theme_labels: list[str],
+    ) -> str:
+        """Derive a stable subject heading for narrative analysis when the model omits one."""
+        primary_haystack = " ".join([text, *theme_labels]).lower()
+        secondary_haystack = " ".join(through_line_leads).lower()
+        best_title = ""
+        best_score = 0
+        for title, keywords in ANALYSIS_SECTION_RULES:
+            score = sum(2 for keyword in keywords if keyword in primary_haystack)
+            score += sum(1 for keyword in keywords if keyword in secondary_haystack)
+            if score > best_score:
+                best_title = title
+                best_score = score
+        if best_title:
+            return best_title
+        return "Market Synthesis"
 
     def _coerce_through_line(self, raw_line: Any) -> dict[str, Any] | None:
         """Coerce one through-line into the canonical schema."""
@@ -751,6 +869,10 @@ class Synthesizer:
             raw_line.get("supporting_themes") or raw_line.get("themes"),
             limit=6,
         )
+        supporting_trade_ids = coerce_supporting_trade_ids(
+            raw_line.get("supporting_trade_ids"),
+            limit=2,
+        )
         supporting_trades = self._coerce_trade_items(
             raw_line.get("supporting_trades") or raw_line.get("trades")
         )
@@ -766,6 +888,7 @@ class Synthesizer:
                 raw_line.get("consensus_anchor") or raw_line.get("market_belief") or raw_line.get("anchor")
             ),
             "supporting_themes": supporting_themes,
+            "supporting_trade_ids": supporting_trade_ids,
             "supporting_trades": supporting_trades,
             "key_insight": key_insight or lead,
         }
@@ -1635,6 +1758,9 @@ class Synthesizer:
         if compact:
             themes = [self._compact_theme_entry(theme) for theme in themes]
             trades = [self._compact_trade_entry(trade) for trade in trades]
+        else:
+            themes = [self._without_document_link(theme) for theme in themes]
+            trades = [self._without_document_link(trade) for trade in trades]
 
         return {
             "themes": themes,
@@ -1649,6 +1775,16 @@ class Synthesizer:
                 input_data.get("scope", {}) or {},
                 input_data,
             ),
+        }
+
+    @staticmethod
+    def _without_document_link(entry: Any) -> dict[str, Any]:
+        if not isinstance(entry, dict):
+            return {}
+        return {
+            key: value
+            for key, value in entry.items()
+            if key != "document_link"
         }
 
     def _should_compact_stage1_payload(self, config: ModelConfig) -> bool:
@@ -1697,6 +1833,7 @@ class Synthesizer:
             return {}
 
         compacted = {
+            "trade_id": trade.get("trade_id", ""),
             "source": trade.get("source", ""),
             "document": self._truncate_text(trade.get("document", ""), 72),
             "text": self._truncate_text(trade.get("text", ""), 160),

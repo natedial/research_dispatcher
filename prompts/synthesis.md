@@ -39,8 +39,9 @@ THROUGH-LINE CONSTRAINTS:
 - Each through-line should connect at least 2 supporting themes unless the output is a clearly labeled contrarian single-source risk
 - Prefer one comprehensive narrative per theme cluster rather than several overlapping mini-through-lines
 - If themes or trades do not resolve into a coherent narrative, exclude them
-- Do not list more than 2 supporting trades; use short executable trade expressions, not full rationale blobs
-- If supporting trades are weak, redundant, or tangential, return an empty array instead
+- Select at most 2 supporting trades by `trade_id` from the input `trades` array; never invent or rephrase trade expressions
+- Leave `supporting_trade_ids` empty when no input trade cleanly expresses the finding
+- When `scope.asset_focus` is set, only attach trades actionable for that asset class
 
 {{component:throughline_balance_rules}}
 
@@ -58,7 +59,7 @@ For each through-line, provide:
 
 5. **supporting_themes**: Array of theme labels that support this through-line
 
-6. **supporting_trades**: Array of up to 2 short trade expressions that align with this through-line (empty array if none)
+6. **supporting_trade_ids**: Array of up to 2 `trade_id` values from the input `trades` array that align with this through-line (empty array if none)
 
 7. **key_insight**: Structured synthesis (max 300 words) covering:
     - What the market is broadly being paid to believe
@@ -101,6 +102,7 @@ You will receive JSON with this structure:
   ],
   "trades": [
     {
+      "trade_id": "t1",
       "source": "JPMorgan",
       "document": "JPM Interest Rate Derivatives",
       "text": "Trade description...",
@@ -127,7 +129,7 @@ Return EXACTLY ONE JSON object. No explanations outside the JSON.
       "consensus_level": "moderate_consensus",
       "consensus_anchor": "The market is being paid to believe the Fed can look through a supply shock and still ease later in the year.",
       "supporting_themes": ["theme label 1", "theme label 2"],
-      "supporting_trades": ["trade expression 1"],
+      "supporting_trade_ids": ["t3"],
       "key_insight": "synthesis paragraph with source attribution"
     }
   ],
@@ -143,7 +145,7 @@ RULES:
 1. Return EXACTLY ONE JSON object
 2. 3-8 through-lines (prioritize quality over quantity)
 3. Highlight both consensus AND divergence
-4. Connect trades to themes where logical relationships exist
+4. Connect input trades to themes where logical relationships exist; reference trades only by `trade_id`
 5. Every through-line must read as a single narrative finding, not a list of related observations
 6. Supporting themes must be the evidence spine of the through-line
 7. Contrarian through-lines must name the consensus assumption they challenge

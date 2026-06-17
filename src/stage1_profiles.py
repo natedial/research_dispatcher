@@ -128,7 +128,7 @@ def build_stage1_prompt(base_prompt: str, profile: Stage1Profile) -> str:
             )
         if profile.max_supporting_trades > 0:
             overrides.append(
-                f"- Keep supporting_trades to at most {profile.max_supporting_trades} items per through-line."
+                f"- Keep supporting_trade_ids to at most {profile.max_supporting_trades} items per through-line."
             )
         if not overrides:
             return base_prompt
@@ -158,7 +158,7 @@ Return EXACTLY ONE JSON object with this schema:
       "consensus_level": "strong_consensus|moderate_consensus|mixed_views|contrarian",
       "consensus_anchor": "dominant market belief this line supports, fractures, or challenges",
       "supporting_themes": ["theme 1", "theme 2"],
-      "supporting_trades": ["trade expression"],
+      "supporting_trade_ids": ["t3"],
       "key_insight": "short narrative synthesis"
     }}
   ]
@@ -168,7 +168,7 @@ Rules:
 - Return exactly {count} through-lines.
 - At least half of the through-lines must be consensus-anchored.
 - supporting_themes: at most {theme_cap}.
-- supporting_trades: at most {trade_cap}.
+- supporting_trade_ids: at most {trade_cap}.
 - key_insight: at most {insight_words} words.
 - Every through-line must explain the mechanism and the flip signpost.
 - Use only the provided evidence. If support is weak, omit the idea.
@@ -184,7 +184,7 @@ Each through-line must contain:
 - consensus_level
 - consensus_anchor
 - supporting_themes (max {theme_cap})
-- supporting_trades (max {trade_cap})
+- supporting_trade_ids (max {trade_cap})
 - key_insight (max {insight_words} words)
 
 Ranking:

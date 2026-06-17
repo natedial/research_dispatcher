@@ -13,6 +13,7 @@ You will receive JSON with this structure:
   ],
   "trades": [
     {
+      "trade_id": "t1",
       "source": "JPMorgan",
       "document": "JPM Interest Rate Derivatives",
       "text": "Trade description...",
