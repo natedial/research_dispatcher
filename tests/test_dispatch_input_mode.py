@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.main import _load_dispatch_documents
+from src.dispatch_input import load_dispatch_documents as _load_dispatch_documents
 
 
 class _FakeDatabaseClient:
@@ -12,7 +12,7 @@ class _FakeDatabaseClient:
 
     def query_analysis(self):
         self.query_analysis_calls += 1
-        return [{"id": 1, "document_name": "Parser Note", "parsed_data": {}}]
+        return [{"id": 1, "document_name": "Parser Note", "parsed_data": {"themes": [{"label": "term premium"}]}}]
 
 
 class DispatchInputModeTests(unittest.TestCase):

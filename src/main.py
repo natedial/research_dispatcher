@@ -20,8 +20,8 @@ if str(_WORKSPACE_ROOT) not in sys.path:
 
 from config import Config
 from research_pipeline_ops import PipelineOpsClient
-from src.analyst_client import AnalystBatchClient
 from src.database import DatabaseClient
+from src.dispatch_input import load_dispatch_documents
 from src.dispatch_store import DispatchStore
 from src.delta_engine import SynthesisDeltaTracker
 from src.formatter import ReportFormatter
@@ -56,14 +56,12 @@ def _load_dispatch_documents(
     analyst_batch_path: str,
     db_client: DatabaseClient,
 ) -> tuple[list[dict], object | None, str]:
-    """Load dispatcher input from the explicitly selected source."""
-    if input_mode == "parser":
-        data = db_client.query_analysis()
-        return data, None, "parsed_research"
-    if input_mode == "analyst":
-        dispatch_batch = AnalystBatchClient(analyst_batch_path).load_batch()
-        return dispatch_batch.to_legacy_records(), dispatch_batch, "analyst_batch"
-    raise ValueError("DISPATCH_INPUT_MODE must be one of: parser, analyst")
+    """Compatibility wrapper for generate_pdf_only and existing tests."""
+    return load_dispatch_documents(
+        input_mode=input_mode,
+        analyst_batch_path=analyst_batch_path,
+        db_client=db_client,
+    )
 
 
 def main():
@@ -135,7 +133,7 @@ def main():
                 )
             else:
                 logger.info("Querying parsed_research documents")
-            data, dispatch_batch, source_type = _load_dispatch_documents(
+            data, dispatch_batch, source_type = load_dispatch_documents(
                 input_mode=Config.DISPATCH_INPUT_MODE,
                 analyst_batch_path=Config.ANALYST_BATCH_PATH,
                 db_client=db_client,

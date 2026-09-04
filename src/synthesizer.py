@@ -20,6 +20,7 @@ from .stage1_profiles import (
     build_stage1_prompt,
     stage1_profile_from_model_config,
 )
+from .parser_payload import has_synthesis_signals
 from .report_models import DispatchBatch
 from .throughline_input_builder import ThroughlineInputBuilder
 from .trade_normalization import dedupe_text_items, normalize_trade_expression
@@ -247,8 +248,11 @@ class Synthesizer:
             input_data = self._prepare_input(documents)
             document_count = len(documents)
 
-        if not input_data["themes"]:
-            print("No themes found in documents, skipping synthesis")
+        if not has_synthesis_signals(input_data):
+            print(
+                "No synthesis signals found (themes, trades, assertions, "
+                "talking points, or trading opportunities); skipping synthesis"
+            )
             return None
 
         print(f"Synthesizing {len(input_data['themes'])} themes and {len(input_data['trades'])} trades from {input_data['document_count']} documents...")

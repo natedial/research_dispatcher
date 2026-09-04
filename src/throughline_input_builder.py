@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from .parser_payload import is_source_only_parsed_data
 from .report_models import DispatchBatch
 from .trade_normalization import normalize_trade_expression
 
@@ -21,7 +22,7 @@ class ThroughlineInputBuilder:
         for doc in documents:
             parsed_data = doc.get("parsed_data", {})
             if not isinstance(parsed_data, dict):
-                continue
+                parsed_data = {}
 
             source = str(doc.get("source") or "Unknown")
             doc_name = str(doc.get("document_name") or "Unknown Document")
@@ -30,6 +31,11 @@ class ThroughlineInputBuilder:
             sources.add(source)
             if source_date:
                 dates.append(source_date)
+
+            # Source-only parser rows have identity/parse/full_text and no
+            # extraction. Do not invent themes from that blob.
+            if is_source_only_parsed_data(parsed_data):
+                continue
 
             for theme in parsed_data.get("themes", []):
                 if not isinstance(theme, dict):
